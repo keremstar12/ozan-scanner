@@ -63,11 +63,31 @@ def get_tickers() -> list:
     return r.json()["result"]["list"]
 
 def get_btc_change() -> float:
-    tickers = get_tickers()
-    for t in tickers:
-        if t["symbol"] == "BTCUSDT":
-            return float(t["price24hPcnt"]) * 100
-    raise ValueError("BTC verisi alınamadı")
+    r = requests.get(f"{BYBIT}/v5/market/tickers",
+                     params={"category": "spot", "symbol": "BTCUSDT"},
+                     timeout=15)
+    data = r.json()
+    return float(data["result"]["list"][0]["price24hPcnt"]) * 100
+
+def get_daily_ma30(symbol: str) -> bool:
+    """Günlük fiyat > günlük MA30 mı kontrol et."""
+    try:
+        r = requests.get(f"{BYBIT}/v5/market/kline",
+                         params={"category": "spot", "symbol": symbol,
+                                 "interval": "D", "limit": 35},
+                         timeout=15)
+        data = r.json()["result"]["list"]
+        data.reverse()
+        df = pd.DataFrame(data, columns=[
+            "time","open","high","low","close","volume","turnover"
+        ])
+        df["close"] = df["close"].astype(float)
+        df["ma30"]  = df["close"].rolling(30).mean()
+        last = df.iloc[-1]
+        if pd.isna(last["ma30"]): return True
+        return float(last["close"]) > float(last["ma30"])
+    except:
+        return True
 
 def get_candles(symbol: str) -> pd.DataFrame:
     r = requests.get(f"{BYBIT}/v5/market/kline",
@@ -145,6 +165,8 @@ def ma_quality(price: float, ma30: float) -> str:
 def analyze(symbol: str, vol_usdt: float, change_24h: float, elenenler: dict):
     coin = symbol.replace("USDT", "")
     try:
+        if not get_daily_ma30(symbol):
+            elenenler["Günlük trend aşağı (fiyat < günlük MA30)"].append(coin); return None
         df   = get_candles(symbol)
         df   = calc_indicators(df)
         last = df.iloc[-1]
