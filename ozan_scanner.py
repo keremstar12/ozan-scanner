@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-OZAN SCANNER — Bybit Spot API
-GitHub Actions uyumlu, geo-restriction yok.
+OZAN SCANNER — MEXC API (GitHub Actions uyumlu)
 Sinyal bulunca Telegram'a bildirim atar.
 """
 
@@ -13,7 +12,7 @@ from collections import defaultdict
 import pandas as pd
 
 # ─── AYARLAR ──────────────────────────────────────────────────────────────────
-MIN_VOLUME      = 5_000_000    # 5M USDT minimum hacim
+MIN_VOLUME      = 5_000_000
 MIN_GAIN_PCT    = 3.0
 MAX_GAIN_PCT    = 20.0
 BTC_DROP_LIMIT  = -3.0
@@ -32,13 +31,8 @@ EXCLUDE = {'BTCUSDT','USDTUSDT','USDCUSDT','BUSDUSDT',
 TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 TUR_TZ           = timezone(timedelta(hours=3))
-BYBIT            = "https://api.bybit.com"
+MEXC             = "https://api.mexc.com"
 # ──────────────────────────────────────────────────────────────────────────────
-
-
-# ╔══════════════════╗
-# ║  TELEGRAM        ║
-# ╚══════════════════╝
 
 def telegram(msg: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -53,57 +47,39 @@ def telegram(msg: str):
         print(f"Telegram hatası: {e}")
 
 
-# ╔══════════════╗
-# ║  VERİ ÇEKME  ║
-# ╚══════════════╝
+# ─── VERİ ÇEKME ───────────────────────────────────────────────────────────────
 
 def get_tickers() -> list:
-    r = requests.get(f"{BYBIT}/v5/market/tickers",
-                     params={"category": "spot"}, timeout=15)
-    return r.json()["result"]["list"]
+    r = requests.get(f"{MEXC}/api/v3/ticker/24hr", timeout=15)
+    return r.json()
 
 def get_btc_change() -> float:
-    r = requests.get(f"{BYBIT}/v5/market/tickers",
-                     params={"category": "spot", "symbol": "BTCUSDT"},
+    r = requests.get(f"{MEXC}/api/v3/ticker/24hr",
+                     params={"symbol": "BTCUSDT"}, timeout=15)
+    return float(r.json()["priceChangePercent"])
+
+def get_candles(symbol: str, interval: str = "1h", limit: int = CANDLE_LIMIT) -> pd.DataFrame:
+    r = requests.get(f"{MEXC}/api/v3/klines",
+                     params={"symbol": symbol, "interval": interval, "limit": limit},
                      timeout=15)
-    print(f"  BTC API status: {r.status_code}")
-    print(f"  BTC API yanit: {r.text[:300]}")
     data = r.json()
-    return float(data["result"]["list"][0]["price24hPcnt"]) * 100
+    df = pd.DataFrame(data, columns=[
+        "time","open","high","low","close","volume",
+        "ct","qv","tr","tbbv","tbqv","ign"
+    ])
+    for c in ["open","high","low","close","volume"]:
+        df[c] = df[c].astype(float)
+    return df.iloc[:-1].reset_index(drop=True)
 
 def get_daily_ma30(symbol: str) -> bool:
-    """Günlük fiyat > günlük MA30 mı kontrol et."""
     try:
-        r = requests.get(f"{BYBIT}/v5/market/kline",
-                         params={"category": "spot", "symbol": symbol,
-                                 "interval": "D", "limit": 35},
-                         timeout=15)
-        data = r.json()["result"]["list"]
-        data.reverse()
-        df = pd.DataFrame(data, columns=[
-            "time","open","high","low","close","volume","turnover"
-        ])
-        df["close"] = df["close"].astype(float)
-        df["ma30"]  = df["close"].rolling(30).mean()
+        df = get_candles(symbol, interval="1d", limit=35)
+        df["ma30"] = df["close"].rolling(30).mean()
         last = df.iloc[-1]
         if pd.isna(last["ma30"]): return True
         return float(last["close"]) > float(last["ma30"])
     except:
         return True
-
-def get_candles(symbol: str) -> pd.DataFrame:
-    r = requests.get(f"{BYBIT}/v5/market/kline",
-                     params={"category": "spot", "symbol": symbol,
-                             "interval": "60", "limit": CANDLE_LIMIT},
-                     timeout=15)
-    data = r.json()["result"]["list"]
-    data.reverse()   # Bybit en yeniyi önce verir, ters çevir
-    df = pd.DataFrame(data, columns=[
-        "time","open","high","low","close","volume","turnover"
-    ])
-    for c in ["open","high","low","close","volume","turnover"]:
-        df[c] = df[c].astype(float)
-    return df.iloc[:-1].reset_index(drop=True)   # Son açık mumu at
 
 def get_usdtry() -> float:
     try:
@@ -113,9 +89,7 @@ def get_usdtry() -> float:
         return 38.0
 
 
-# ╔═══════════════════╗
-# ║  TEKNİK ANALİZ    ║
-# ╚═══════════════════╝
+# ─── TEKNİK ANALİZ ────────────────────────────────────────────────────────────
 
 def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -160,15 +134,11 @@ def ma_quality(price: float, ma30: float) -> str:
     return "X"
 
 
-# ╔══════════════╗
-# ║  ANALİZ      ║
-# ╚══════════════╝
+# ─── ANALİZ ───────────────────────────────────────────────────────────────────
 
 def analyze(symbol: str, vol_usdt: float, change_24h: float, elenenler: dict):
     coin = symbol.replace("USDT", "")
     try:
-        if not get_daily_ma30(symbol):
-            elenenler["Günlük trend aşağı (fiyat < günlük MA30)"].append(coin); return None
         df   = get_candles(symbol)
         df   = calc_indicators(df)
         last = df.iloc[-1]
@@ -242,9 +212,7 @@ def analyze(symbol: str, vol_usdt: float, change_24h: float, elenenler: dict):
         elenenler["Hata"].append(coin); return None
 
 
-# ╔══════════════════╗
-# ║  ÇIKTI           ║
-# ╚══════════════════╝
+# ─── ÇIKTI ────────────────────────────────────────────────────────────────────
 
 def tl(val: float, kur: float) -> str:
     v = val * kur
@@ -313,13 +281,11 @@ def telegram_signal(s: dict, kur: float):
     )
 
 
-# ╔══════════════╗
-# ║  MAIN        ║
-# ╚══════════════╝
+# ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
     now = datetime.now(TUR_TZ).strftime("%d.%m.%Y %H:%M")
-    print(f"\n  OZAN SCANNER — {now}  (Bybit)\n")
+    print(f"\n  OZAN SCANNER — {now}  (MEXC)\n")
 
     kur = get_usdtry()
     print(f"  USD/TRY: {kur:.2f}")
@@ -342,8 +308,8 @@ def main():
     for t in tickers:
         try:
             sym    = t["symbol"]
-            vol    = float(t["turnover24h"])
-            change = float(t["price24hPcnt"]) * 100
+            vol    = float(t["quoteVolume"])
+            change = float(t["priceChangePercent"])
             if sym in EXCLUDE: continue
             if not sym.endswith("USDT"): continue
             if vol >= MIN_VOLUME and MIN_GAIN_PCT <= change <= MAX_GAIN_PCT:
@@ -369,7 +335,7 @@ def main():
         print("\n  Şu an sinyal bulunamadı.\n")
     else:
         print(f"\n  {len(signals)} SİNYAL BULUNDU:")
-        telegram(f"📊 <b>OZAN SCANNER</b> — {now}\n{len(signals)} sinyal bulundu\n{'─'*28}")
+        telegram(f"📊 <b>OZAN SCANNER</b> — {now}\n{len(signals)} sinyal\n{'─'*28}")
         time.sleep(0.5)
         for s in signals:
             print_signal(s, kur)
@@ -377,9 +343,7 @@ def main():
             time.sleep(0.5)
 
     print("  ⚠️  Yatırım tavsiyesi değildir.\n")
-    if os.environ.get("TELEGRAM_TOKEN"):
-        pass  # GitHub Actions — sessizce çık
-    else:
+    if not os.environ.get("TELEGRAM_TOKEN"):
         input("  Çıkmak için Enter'a basın...")
 
 
