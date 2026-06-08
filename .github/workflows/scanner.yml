@@ -1,0 +1,27 @@
+name: Ozan Scanner
+
+on:
+  schedule:
+    - cron: '1 * * * *'   # Her saatin 1. dakikasında (11:01, 12:01, 13:01...)
+  workflow_dispatch:        # Manuel çalıştırma butonu
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodu indir
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Kütüphaneleri yükle
+        run: pip install python-binance pandas requests
+
+      - name: Taramayı çalıştır
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python ozan_scanner.py
