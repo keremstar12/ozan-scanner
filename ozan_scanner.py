@@ -66,6 +66,8 @@ def get_btc_change() -> float:
     r = requests.get(f"{BYBIT}/v5/market/tickers",
                      params={"category": "spot", "symbol": "BTCUSDT"},
                      timeout=15)
+    print(f"  BTC API status: {r.status_code}")
+    print(f"  BTC API yanit: {r.text[:300]}")
     data = r.json()
     return float(data["result"]["list"][0]["price24hPcnt"]) * 100
 
