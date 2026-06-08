@@ -56,7 +56,9 @@ def get_tickers() -> list:
 def get_btc_change() -> float:
     r = requests.get(f"{MEXC}/api/v3/ticker/24hr",
                      params={"symbol": "BTCUSDT"}, timeout=15)
-    return float(r.json()["priceChangePercent"])
+    data = r.json()
+    print(f"  BTC raw data: {data}")
+    return float(data["priceChangePercent"])
 
 def get_candles(symbol: str, interval: str = "1h", limit: int = CANDLE_LIMIT) -> pd.DataFrame:
     r = requests.get(f"{MEXC}/api/v3/klines",
@@ -304,6 +306,9 @@ def main():
     except Exception as e:
         print(f"  Veri hatası: {e}"); return
 
+    # Debug: ilk 2 ticker'ı göster
+    if tickers:
+        print(f"  Ornek ticker: {tickers[0]}")
     candidates = []
     for t in tickers:
         try:
